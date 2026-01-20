@@ -102,7 +102,7 @@ def verify_txid(txid: str, expected_amount: float):
 def start(update: Update, context: CallbackContext):
     kb = [[InlineKeyboardButton("🚀 Start Trending", callback_data="START")]]
     update.message.reply_text(
-        "🔥 PumpFun Trending\n\n"
+        "🔥 Pump-Fun Trending\n\n"
         "Boost visibility for your token on PumpFun.\n"
         "Fast activation • Manual control • Real visibility",
         reply_markup=InlineKeyboardMarkup(kb),
@@ -117,10 +117,11 @@ def buttons(update: Update, context: CallbackContext):
 
     if q.data == "START":
         USER_STATE[uid] = {"step": "ASK_CA"}
+        q.message.delete()
         context.bot.send_photo(
             chat_id=uid,
             photo=ENTER_CA_IMAGE_URL,
-            caption="🟢 PumpFun Network\n\nPlease enter your token contract address (CA)",
+            caption="🟢 Please enter your token contract address (CA)",
         )
 
     elif q.data == "CONFIRM_CA":
@@ -131,20 +132,47 @@ def buttons(update: Update, context: CallbackContext):
             [InlineKeyboardButton("24h — 7.90 SOL", callback_data="PKG_24h")],
             [InlineKeyboardButton("⬅️ Back", callback_data="START")],
         ]
-        q.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(kb))
+        q.message.delete()
+        context.bot.send_message(
+            chat_id=uid,
+            text="Select trending duration:",
+            reply_markup=InlineKeyboardMarkup(kb),
+        )
 
     elif q.data.startswith("PKG_"):
         pkg = q.data.replace("PKG_", "")
         state["package"] = pkg
         state["amount"] = PACKAGES[pkg]
-        state["step"] = "ASK_TXID"
 
-        q.message.reply_text(
-            "Activation address\n\n"
-            f"`{PAY_WALLET}`\n\n"
-            "🛎️ Send TXID to confirm",
+        q.message.delete()
+        context.bot.send_message(
+            chat_id=uid,
+            text=(
+                "🟢 Token Detected\n\n"
+                f"Name: {state['name']}\n"
+                f"💠 Symbol: {state['symbol']}\n"
+                f"💵 Price: ${state['price']}\n"
+                f"💧 Liquidity: {fmt_usd(state['liquidity'])}\n"
+                f"📊 Market Cap: {fmt_usd(state['mcap'])}\n\n"
+                f"⏱ Selected Package: {pkg.upper()}"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Confirm", callback_data="PAY")],
+                [InlineKeyboardButton("⬅️ Back", callback_data="CONFIRM_CA")],
+            ]),
+        )
+
+    elif q.data == "PAY":
+        context.bot.send_message(
+            chat_id=uid,
+            text=(
+                "Activation address\n\n"
+                f"`{PAY_WALLET}`\n\n"
+                "🛎️ Send TXID to confirm"
+            ),
             parse_mode="Markdown",
         )
+        USER_STATE[uid]["step"] = "ASK_TXID"
 
     elif q.data.startswith("ADMIN_START_") and uid == ADMIN_ID:
         ref = q.data.replace("ADMIN_START_", "")
@@ -202,7 +230,7 @@ def messages(update: Update, context: CallbackContext):
         )
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Confirm", callback_data="CONFIRM_CA")],
+            [InlineKeyboardButton("Continue", callback_data="CONFIRM_CA")],
             [InlineKeyboardButton("⬅️ Back", callback_data="START")],
         ])
 
