@@ -71,3 +71,12 @@ def start_web_server():
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
+    if __name__ == "__main__":
+    start_web_server()
+
+    # Start Telegram bot AFTER web server
+    import bot
+    bot.main()
+
+    while True:
+        time.sleep(60)
