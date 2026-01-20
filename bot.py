@@ -24,7 +24,7 @@ PAY_WALLET = os.getenv("PAY_WALLET")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 
-ENTER_CA_IMAGE_URL = "https://raw.githubusercontent.com/edenalpha687/pumpfun-trending-bot/main/DF090CBC-91A5-4116-9600-9FF376E69ACA.png"
+ENTER_CA_IMAGE_URL = ENTER_CA_IMAGE_URL = "https://raw.githubusercontent.com/edenalpha687/pumpfun-trending-bot/main/589CF67D-AF43-433F-A8AB-B43E9653E703.png"
 
 DEX_TOKEN_URL = "https://api.dexscreener.com/latest/dex/tokens/"
 HELIUS_TX_URL = f"https://api.helius.xyz/v0/transactions/?api-key={HELIUS_API_KEY}"
@@ -297,4 +297,6 @@ def main():
     updater.idle()
 
 if __name__ == "__main__":
+    from web import start_web_server
+    start_web_server()
     main()
