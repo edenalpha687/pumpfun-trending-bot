@@ -297,6 +297,4 @@ def main():
     updater.idle()
 
 if __name__ == "__main__":
-    from web import start_web_server
-    start_web_server()
     main()
