@@ -138,11 +138,12 @@ def buttons(update: Update, context: CallbackContext):
     if q.data == "START":
         USER_STATE[uid] = {"step": "CA"}
         q.message.delete()
-        context.bot.send_photo(
+        sent = context.bot.send_photo(
             chat_id=uid,
             photo=ENTER_CA_IMAGE_URL,
             caption="🟢 Please enter your token contract address (CA)",
         )
+        USER_STATE[uid]["prompt_msg_id"] = sent.message_id
 
     elif q.data == "PACKAGES":
         kb = [[InlineKeyboardButton(f"{k} — {v} SOL", callback_data=f"PKG_{k}")]
@@ -222,13 +223,20 @@ def messages(update: Update, context: CallbackContext):
         return
 
     if state["step"] == "CA":
+        # delete the prompt + the user's CA message
+        try:
+            context.bot.delete_message(chat_id=uid, message_id=state.get("prompt_msg_id"))
+            context.bot.delete_message(chat_id=uid, message_id=update.message.message_id)
+        except Exception:
+            pass
+
         if not is_solana_address(txt):
-            update.message.reply_text("Invalid CA.")
+            context.bot.send_message(chat_id=uid, text="Invalid CA.")
             return
 
         data = fetch_dex_data(txt)
         if not data:
-            update.message.reply_text("Token not found.")
+            context.bot.send_message(chat_id=uid, text="Token not found.")
             return
 
         state.update(data)
