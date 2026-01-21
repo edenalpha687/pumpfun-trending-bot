@@ -17,14 +17,16 @@ from telegram.ext import (
     CallbackContext,
 )
 
-# ================= CONFIG =================
+# ================= ENV =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 PAY_WALLET = os.getenv("PAY_WALLET")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 
-ENTER_CA_IMAGE_URL = ENTER_CA_IMAGE_URL = "https://raw.githubusercontent.com/edenalpha687/pumpfun-trending-bot/main/589CF67D-AF43-433F-A8AB-B43E9653E703.png"
+WEBHOOK_BASE = "https://worker-production-56e9.up.railway.app"
+
+ENTER_CA_IMAGE_URL = "https://raw.githubusercontent.com/edenalpha687/pumpfun-trending-bot/main/589CF67D-AF43-433F-A8AB-B43E9653E703.png"
 
 DEX_TOKEN_URL = "https://api.dexscreener.com/latest/dex/tokens/"
 HELIUS_TX_URL = f"https://api.helius.xyz/v0/transactions/?api-key={HELIUS_API_KEY}"
@@ -40,7 +42,7 @@ USER_STATE = {}
 USED_TXIDS = set()
 
 # ================= HELPERS =================
-def is_solana_address(addr: str) -> bool:
+def is_solana_address(addr):
     return bool(re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", addr))
 
 
@@ -54,7 +56,7 @@ def fmt_usd(v):
     return f"${v:.2f}"
 
 
-def fetch_dex_data(ca: str):
+def fetch_dex_data(ca):
     r = requests.get(f"{DEX_TOKEN_URL}{ca}", timeout=15)
     r.raise_for_status()
     pairs = r.json().get("pairs", [])
@@ -62,57 +64,69 @@ def fetch_dex_data(ca: str):
         return None
 
     pair = max(pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0))
-
-    telegram_link = None
-    for link in (pair.get("info") or {}).get("links", []):
-        if link.get("type") == "telegram":
-            telegram_link = link.get("url")
+    tg = None
+    for l in (pair.get("info") or {}).get("links", []):
+        if l.get("type") == "telegram":
+            tg = l.get("url")
 
     return {
-        "name": pair.get("baseToken", {}).get("name", "Unknown"),
-        "symbol": pair.get("baseToken", {}).get("symbol", ""),
+        "name": pair["baseToken"]["name"],
+        "symbol": pair["baseToken"]["symbol"],
         "price": pair.get("priceUsd"),
         "liquidity": (pair.get("liquidity") or {}).get("usd"),
         "mcap": pair.get("fdv"),
         "pair_url": pair.get("url"),
         "logo": (pair.get("info") or {}).get("imageUrl"),
-        "telegram": telegram_link,
+        "telegram": tg,
     }
 
 
-def verify_txid(txid: str, expected_amount: float):
+def verify_txid(txid, expected):
     try:
         r = requests.get(
             f"{HELIUS_TX_URL}&transactionHashes[]={txid}",
-            timeout=15
+            timeout=15,
         )
         r.raise_for_status()
         data = r.json()
-
         if not data:
             return "PENDING"
 
-        tx = data[0]
-        for t in tx.get("nativeTransfers", []):
+        for t in data[0].get("nativeTransfers", []):
             if t.get("toUserAccount") == PAY_WALLET:
-                sol = t.get("amount", 0) / 1_000_000_000
-                if sol >= expected_amount:
+                sol = t["amount"] / 1_000_000_000
+                if sol >= expected:
                     return "OK"
         return "INVALID"
     except Exception:
         return "PENDING"
 
-# ================= COMMANDS =================
+
+def activate_trending(payload):
+    requests.post(
+        f"{WEBHOOK_BASE}/activate",
+        json={
+            "mint": payload["ca"],
+            "name": payload["name"],
+            "price": payload["price"],
+            "mcap": payload["mcap"],
+            "logo": payload["logo"],
+            "dex": payload["pair_url"],
+        },
+        timeout=10,
+    )
+
+# ================= START =================
 def start(update: Update, context: CallbackContext):
-    kb = [[InlineKeyboardButton("🚀 Start Trending", callback_data="START")]]
+    kb = [[InlineKeyboardButton("🔥 Start Trending", callback_data="START")]]
     update.message.reply_text(
         "🔥 Pump-Fun Trending\n\n"
-        "Boost visibility for your token on PumpFun.\n"
+        "Boost visibility for your token.\n"
         "Fast activation • Manual control • Real visibility",
         reply_markup=InlineKeyboardMarkup(kb),
     )
 
-
+# ================= BUTTONS =================
 def buttons(update: Update, context: CallbackContext):
     q = update.callback_query
     q.answer()
@@ -120,7 +134,7 @@ def buttons(update: Update, context: CallbackContext):
     state = USER_STATE.get(uid)
 
     if q.data == "START":
-        USER_STATE[uid] = {"step": "ASK_CA"}
+        USER_STATE[uid] = {"step": "CA"}
         q.message.delete()
         context.bot.send_photo(
             chat_id=uid,
@@ -128,8 +142,9 @@ def buttons(update: Update, context: CallbackContext):
             caption="🟢 Please enter your token contract address (CA)",
         )
 
-    elif q.data == "SHOW_PACKAGES":
-        kb = [[InlineKeyboardButton(f"{k} — {v} SOL", callback_data=f"PKG_{k}")] for k, v in PACKAGES.items()]
+    elif q.data == "PACKAGES":
+        kb = [[InlineKeyboardButton(f"{k} — {v} SOL", callback_data=f"PKG_{k}")]
+              for k, v in PACKAGES.items()]
         kb.append([InlineKeyboardButton("⬅️ Back", callback_data="START")])
         q.message.delete()
         context.bot.send_message(
@@ -160,12 +175,12 @@ def buttons(update: Update, context: CallbackContext):
             caption=caption,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Confirm", callback_data="PAY")],
-                [InlineKeyboardButton("⬅️ Back", callback_data="SHOW_PACKAGES")],
+                [InlineKeyboardButton("⬅️ Back", callback_data="PACKAGES")],
             ]),
         )
 
     elif q.data == "PAY":
-        state["step"] = "ASK_TXID"
+        state["step"] = "TXID"
         context.bot.send_message(
             chat_id=uid,
             text=(
@@ -182,6 +197,8 @@ def buttons(update: Update, context: CallbackContext):
         if not payload:
             return
 
+        activate_trending(payload)
+
         context.bot.send_message(
             chat_id=CHANNEL_USERNAME,
             text=(
@@ -191,92 +208,58 @@ def buttons(update: Update, context: CallbackContext):
                 f"Started: {datetime.utcnow().strftime('%H:%M UTC')}"
             ),
         )
-import requests
 
-    requests.post(
-        "https://worker-production-56e9.up.railway.app/activate",
-        json={
-            "mint": payload["ca"],
-            "name": payload["name"],
-            "price": payload["price"],
-            "mcap": payload["mcap"],
-            "logo": payload["logo"],
-            "dex": payload["pair_url"]
-        },
-        timeout=10
-    )
-        q.edit_message_text("Trending activated.")
+        q.edit_message_text("✅ Trending activated.")
 
 # ================= TEXT =================
 def messages(update: Update, context: CallbackContext):
     uid = update.message.from_user.id
     txt = update.message.text.strip()
     state = USER_STATE.get(uid)
-
     if not state:
         return
 
-    # ---- CA INPUT ----
-    if state["step"] == "ASK_CA":
+    if state["step"] == "CA":
         if not is_solana_address(txt):
-            update.message.reply_text("Invalid CA. Please try again.")
+            update.message.reply_text("Invalid CA.")
             return
 
         data = fetch_dex_data(txt)
         if not data:
-            update.message.reply_text("Token not found on Dexscreener.")
+            update.message.reply_text("Token not found.")
             return
 
         state.update(data)
         state["ca"] = txt
         state["step"] = "PREVIEW"
 
-        name_line = (
-            f'🔗 Name: <a href="{data["telegram"]}">{data["name"]}</a>'
-            if data["telegram"]
-            else f"Name: {data['name']}"
-        )
-
-        caption = (
-            "🟢 Token Detected\n\n"
-            f"{name_line}\n"
-            f"💠 Symbol: {data['symbol']}\n"
-            f'💵 Price: <a href="{data["pair_url"]}">${data["price"]}</a>\n'
-            f"💧 Liquidity: {fmt_usd(data['liquidity'])}\n"
-            f"📊 Market Cap: {fmt_usd(data['mcap'])}"
-        )
-
         context.bot.send_photo(
             chat_id=uid,
             photo=data["logo"],
-            caption=caption,
-            parse_mode="HTML",
+            caption=(
+                "🟢 Token Detected\n\n"
+                f"Name: {data['name']}\n"
+                f"💠 Symbol: {data['symbol']}\n"
+                f"💵 Price: ${data['price']}\n"
+                f"💧 Liquidity: {fmt_usd(data['liquidity'])}\n"
+                f"📊 Market Cap: {fmt_usd(data['mcap'])}"
+            ),
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Continue", callback_data="SHOW_PACKAGES")],
+                [InlineKeyboardButton("Continue", callback_data="PACKAGES")],
                 [InlineKeyboardButton("⬅️ Back", callback_data="START")],
             ]),
         )
 
-    # ---- TXID INPUT ----
-    elif state["step"] == "ASK_TXID":
+    elif state["step"] == "TXID":
         if txt in USED_TXIDS:
             update.message.reply_text("TXID already used.")
             return
 
         res = verify_txid(txt, state["amount"])
-
-        if res == "PENDING":
-            update.message.reply_text(
-                "Transaction not indexed yet.\n"
-                "Please wait 30 seconds and resend TXID."
-            )
+        if res != "OK":
+            update.message.reply_text("TXID not confirmed yet.")
             return
 
-        if res == "INVALID":
-            update.message.reply_text("Invalid TXID. Please try again.")
-            return
-
-        # SUCCESS
         USED_TXIDS.add(txt)
         ref = f"{uid}_{txt[-6:]}"
         context.bot_data[ref] = state.copy()
@@ -284,8 +267,7 @@ def messages(update: Update, context: CallbackContext):
         context.bot.send_message(
             chat_id=ADMIN_ID,
             text=(
-                "🛎️ Payment received\n"
-                "Pending activation.\n\n"
+                "🛎️ Payment received\n\n"
                 f"{state['name']} ({state['symbol']})\n"
                 f"CA: {state['ca']}\n"
                 f"Package: {state['package']}"
