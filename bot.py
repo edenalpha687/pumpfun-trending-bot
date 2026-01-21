@@ -191,7 +191,7 @@ def buttons(update: Update, context: CallbackContext):
                 f"Started: {datetime.utcnow().strftime('%H:%M UTC')}"
             ),
         )
-            import requests
+import requests
 
     requests.post(
         "https://worker-production-56e9.up.railway.app/activate",
