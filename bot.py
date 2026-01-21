@@ -191,6 +191,20 @@ def buttons(update: Update, context: CallbackContext):
                 f"Started: {datetime.utcnow().strftime('%H:%M UTC')}"
             ),
         )
+            import requests
+
+    requests.post(
+        "https://worker-production-56e9.up.railway.app/activate",
+        json={
+            "mint": payload["ca"],
+            "name": payload["name"],
+            "price": payload["price"],
+            "mcap": payload["mcap"],
+            "logo": payload["logo"],
+            "dex": payload["pair_url"]
+        },
+        timeout=10
+    )
         q.edit_message_text("Trending activated.")
 
 # ================= TEXT =================
