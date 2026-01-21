@@ -64,10 +64,11 @@ def fetch_dex_data(ca):
         return None
 
     pair = max(pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0))
-    tg = None
+
+    telegram_link = None
     for l in (pair.get("info") or {}).get("links", []):
         if l.get("type") == "telegram":
-            tg = l.get("url")
+            telegram_link = l.get("url")
 
     return {
         "name": pair["baseToken"]["name"],
@@ -77,7 +78,7 @@ def fetch_dex_data(ca):
         "mcap": pair.get("fdv"),
         "pair_url": pair.get("url"),
         "logo": (pair.get("info") or {}).get("imageUrl"),
-        "telegram": tg,
+        "telegram": telegram_link,
     }
 
 
@@ -89,6 +90,7 @@ def verify_txid(txid, expected):
         )
         r.raise_for_status()
         data = r.json()
+
         if not data:
             return "PENDING"
 
@@ -233,17 +235,26 @@ def messages(update: Update, context: CallbackContext):
         state["ca"] = txt
         state["step"] = "PREVIEW"
 
+        name_line = (
+            f'🔗 Name: <a href="{data["telegram"]}">{data["name"]}</a>'
+            if data["telegram"]
+            else f"Name: {data['name']}"
+        )
+
+        caption = (
+            "🟢 Token Detected\n\n"
+            f"{name_line}\n"
+            f"💠 Symbol: {data['symbol']}\n"
+            f'💵 Price: <a href="{data["pair_url"]}">${data["price"]}</a>\n'
+            f"💧 Liquidity: {fmt_usd(data['liquidity'])}\n"
+            f"📊 Market Cap: {fmt_usd(data['mcap'])}"
+        )
+
         context.bot.send_photo(
             chat_id=uid,
             photo=data["logo"],
-            caption=(
-                "🟢 Token Detected\n\n"
-                f"Name: {data['name']}\n"
-                f"💠 Symbol: {data['symbol']}\n"
-                f"💵 Price: ${data['price']}\n"
-                f"💧 Liquidity: {fmt_usd(data['liquidity'])}\n"
-                f"📊 Market Cap: {fmt_usd(data['mcap'])}"
-            ),
+            caption=caption,
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("Continue", callback_data="PACKAGES")],
                 [InlineKeyboardButton("⬅️ Back", callback_data="START")],
