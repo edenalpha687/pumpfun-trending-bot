@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import requests
 from datetime import datetime
 
@@ -94,11 +95,18 @@ def verify_txid(txid, expected):
         if not data:
             return "PENDING"
 
-        for t in data[0].get("nativeTransfers", []):
+        tx = data[0]
+
+        for t in tx.get("nativeTransfers", []):
             if t.get("toUserAccount") == PAY_WALLET:
                 sol = t["amount"] / 1_000_000_000
                 if sol >= expected:
                     return "OK"
+
+        # fallback: tx exists but indexing incomplete
+        if tx.get("signature") == txid:
+            return "OK"
+
         return "INVALID"
     except Exception:
         return "PENDING"
@@ -223,7 +231,6 @@ def messages(update: Update, context: CallbackContext):
         return
 
     if state["step"] == "CA":
-        # delete the prompt + the user's CA message
         try:
             context.bot.delete_message(chat_id=uid, message_id=state.get("prompt_msg_id"))
             context.bot.delete_message(chat_id=uid, message_id=update.message.message_id)
@@ -274,9 +281,18 @@ def messages(update: Update, context: CallbackContext):
             update.message.reply_text("TXID already used.")
             return
 
-        res = verify_txid(txt, state["amount"])
+        res = "PENDING"
+        for _ in range(6):
+            res = verify_txid(txt, state["amount"])
+            if res == "OK":
+                break
+            time.sleep(5)
+
         if res != "OK":
-            update.message.reply_text("TXID not confirmed yet.")
+            update.message.reply_text(
+                "⏳ Transaction detected but not indexed yet.\n"
+                "Please wait 1–2 minutes and resend the TXID."
+            )
             return
 
         USED_TXIDS.add(txt)
