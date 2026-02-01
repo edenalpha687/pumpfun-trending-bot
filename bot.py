@@ -4,11 +4,7 @@ import time
 import requests
 from datetime import datetime
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater,
     CommandHandler,
@@ -83,7 +79,7 @@ def fetch_dex_data(ca):
     }
 
 
-def verify_txid(txid, expected):
+def verify_txid(txid):
     try:
         r = requests.get(
             f"{HELIUS_TX_URL}&transactionHashes[]={txid}",
@@ -91,25 +87,9 @@ def verify_txid(txid, expected):
         )
         r.raise_for_status()
         data = r.json()
-
-        if not data:
-            return "PENDING"
-
-        tx = data[0]
-
-        for t in tx.get("nativeTransfers", []):
-            if t.get("toUserAccount") == PAY_WALLET:
-                sol = t["amount"] / 1_000_000_000
-                if sol >= expected:
-                    return "OK"
-
-        # fallback: tx exists but indexing incomplete
-        if tx.get("signature") == txid:
-            return "OK"
-
-        return "INVALID"
+        return bool(data)
     except Exception:
-        return "PENDING"
+        return False
 
 
 def activate_trending(payload):
@@ -158,35 +138,26 @@ def buttons(update: Update, context: CallbackContext):
               for k, v in PACKAGES.items()]
         kb.append([InlineKeyboardButton("⬅️ Back", callback_data="START")])
         q.message.delete()
-        context.bot.send_message(
-            chat_id=uid,
-            text="Select trending duration:",
-            reply_markup=InlineKeyboardMarkup(kb),
-        )
+        context.bot.send_message(chat_id=uid, text="Select trending duration:", reply_markup=InlineKeyboardMarkup(kb))
 
     elif q.data.startswith("PKG_"):
         pkg = q.data.replace("PKG_", "")
         state["package"] = pkg
         state["amount"] = PACKAGES[pkg]
 
-        caption = (
-            "🟢 Token Detected\n\n"
-            f"Name: {state['name']}\n"
-            f"💠 Symbol: {state['symbol']}\n"
-            f"💵 Price: ${state['price']}\n"
-            f"💧 Liquidity: {fmt_usd(state['liquidity'])}\n"
-            f"📊 Market Cap: {fmt_usd(state['mcap'])}\n\n"
-            f"⏱ Selected Package: {pkg}"
-        )
-
         q.message.delete()
         context.bot.send_photo(
             chat_id=uid,
             photo=state["logo"],
-            caption=caption,
+            caption=(
+                "🟢 Token Detected\n\n"
+                f"{state['name']} ({state['symbol']})\n"
+                f"Liquidity: {fmt_usd(state['liquidity'])}\n"
+                f"Market Cap: {fmt_usd(state['mcap'])}\n\n"
+                f"⏱ Package: {pkg}"
+            ),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Confirm", callback_data="PAY")],
-                [InlineKeyboardButton("⬅️ Back", callback_data="PACKAGES")],
             ]),
         )
 
@@ -194,11 +165,7 @@ def buttons(update: Update, context: CallbackContext):
         state["step"] = "TXID"
         context.bot.send_message(
             chat_id=uid,
-            text=(
-                "Activation address\n\n"
-                f"`{PAY_WALLET}`\n\n"
-                "🛎️ Send TXID to confirm"
-            ),
+            text=f"Send payment to:\n\n`{PAY_WALLET}`\n\nThen send TXID.",
             parse_mode="Markdown",
         )
 
@@ -227,53 +194,29 @@ def messages(update: Update, context: CallbackContext):
     uid = update.message.from_user.id
     txt = update.message.text.strip()
     state = USER_STATE.get(uid)
+
     if not state:
         return
 
     if state["step"] == "CA":
-        try:
-            context.bot.delete_message(chat_id=uid, message_id=state.get("prompt_msg_id"))
-            context.bot.delete_message(chat_id=uid, message_id=update.message.message_id)
-        except Exception:
-            pass
-
         if not is_solana_address(txt):
-            context.bot.send_message(chat_id=uid, text="Invalid CA.")
+            update.message.reply_text("Invalid CA.")
             return
 
         data = fetch_dex_data(txt)
         if not data:
-            context.bot.send_message(chat_id=uid, text="Token not found.")
+            update.message.reply_text("Token not found.")
             return
 
         state.update(data)
         state["ca"] = txt
         state["step"] = "PREVIEW"
 
-        name_line = (
-            f'🔗 Name: <a href="{data["telegram"]}">{data["name"]}</a>'
-            if data["telegram"]
-            else f"Name: {data['name']}"
-        )
-
-        caption = (
-            "🟢 Token Detected\n\n"
-            f"{name_line}\n"
-            f"💠 Symbol: {data['symbol']}\n"
-            f'💵 Price: <a href="{data["pair_url"]}">${data["price"]}</a>\n'
-            f"💧 Liquidity: {fmt_usd(data['liquidity'])}\n"
-            f"📊 Market Cap: {fmt_usd(data['mcap'])}"
-        )
-
         context.bot.send_photo(
             chat_id=uid,
             photo=data["logo"],
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Continue", callback_data="PACKAGES")],
-                [InlineKeyboardButton("⬅️ Back", callback_data="START")],
-            ]),
+            caption=f"🟢 {data['name']} ({data['symbol']})",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Continue", callback_data="PACKAGES")]]),
         )
 
     elif state["step"] == "TXID":
@@ -281,24 +224,28 @@ def messages(update: Update, context: CallbackContext):
             update.message.reply_text("TXID already used.")
             return
 
-        res = "PENDING"
-        for _ in range(6):
-            res = verify_txid(txt, state["amount"])
-            if res == "OK":
-                break
-            time.sleep(5)
+        update.message.reply_text("🔍 Verifying transaction...")
 
-        if res != "OK":
-            update.message.reply_text(
-                "⏳ Transaction detected but not indexed yet.\n"
-                "Please wait 1–2 minutes and resend the TXID."
-            )
+        if not verify_txid(txt):
+            update.message.reply_text("❌ Invalid TXID.")
             return
 
         USED_TXIDS.add(txt)
+
         ref = f"{uid}_{txt[-6:]}"
         context.bot_data[ref] = state.copy()
 
+        # USER RECEIPT
+        update.message.reply_text(
+            "🟢 Payment Confirmed\n\n"
+            "🧾 Trending Receipt\n"
+            f"Token: {state['name']} ({state['symbol']})\n"
+            f"Package: {state['package']}\n"
+            f"Amount: {state['amount']} SOL\n"
+            "Status: Pending activation"
+        )
+
+        # ADMIN NOTIFY
         context.bot.send_message(
             chat_id=ADMIN_ID,
             text=(
@@ -312,7 +259,6 @@ def messages(update: Update, context: CallbackContext):
             ]),
         )
 
-        update.message.reply_text("🟢 Payment received.\nPending activation.")
         USER_STATE.pop(uid, None)
 
 # ================= MAIN =================
